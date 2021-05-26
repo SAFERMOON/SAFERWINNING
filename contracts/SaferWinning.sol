@@ -12,8 +12,8 @@ import "./ISaferMoon.sol";
 contract SaferWinning is Ownable, VRFConsumerBase {
     using SafeMath for uint;
 
-    ISaferMoon public token;
-    uint public maxEntriesPerAccount;
+    ISaferMoon public immutable token;
+    uint public immutable maxEntriesPerAccount;
 
     uint public totalEntries;
     mapping(address => uint) public entries;
@@ -23,19 +23,13 @@ contract SaferWinning is Ownable, VRFConsumerBase {
     address[] public participants;
     address public winner;
 
-    struct Leader {
-        address account;
-        uint entries;
-    }
-    Leader[10] public leaderboard;
-    uint public floor;
-
     event Deposit(address account, uint amount);
     event Withdrawal(address account, uint amount);
     event Result(address winner);
 
-    bytes32 private keyHash;
-    uint private fee;
+    bytes32 private immutable keyHash;
+    uint private immutable fee;
+    bytes32 private requestId;
 
     constructor(
         address _token,
@@ -53,18 +47,25 @@ contract SaferWinning is Ownable, VRFConsumerBase {
         participants.push(address(0));
     }
 
-    function deposit(uint amount) external updateParticipantsDeposit updateLeaderboardDeposit {
-        require(amount > 0, "Contest: amount must be > 0");
+    modifier onlyEOA() {
+        require(msg.sender == tx.origin, "Only EOA");
+        _;
+    }
+
+    function deposit(uint amount) external onlyEOA {
+        require(amount != 0, "Contest: amount must be > 0");
 
         uint reflection = token.reflectionFromToken(amount, !token.isExcludedFromFee(address(this)));
         uint _amount = token.tokenFromReflection(reflection);
         uint _entries = entries[msg.sender].add(_amount);
         require(_entries <= maxEntriesPerAccount, "Contest: max entries exceeded");
 
+        token.transferFrom(msg.sender, address(this), amount);
         totalEntries = totalEntries.add(_amount);
         entries[msg.sender] = _entries;
         balances[msg.sender] = balances[msg.sender].add(reflection);
-        token.transferFrom(msg.sender, address(this), amount);
+
+        updateParticipantsDeposit();
 
         emit Deposit(msg.sender, amount);
     }
@@ -73,8 +74,8 @@ contract SaferWinning is Ownable, VRFConsumerBase {
         return token.tokenFromReflection(balances[account]);
     }
 
-    function withdraw(uint amount) external updateParticipantsWithdrawal updateLeaderboardWithdrawal {
-        require(amount > 0, "Contest: amount must be > 0");
+    function withdraw(uint amount) external onlyEOA {
+        require(amount != 0, "Contest: amount must be > 0");
 
         uint balance = balances[msg.sender];
         require(amount <= token.tokenFromReflection(balance), "Contest: amount exceeds balance");
@@ -87,15 +88,19 @@ contract SaferWinning is Ownable, VRFConsumerBase {
         balances[msg.sender] = balance.sub(token.reflectionFromToken(amount, false)); // subtract full amount
         token.transfer(msg.sender, amount);
 
+        updateParticipantsWithdrawal();
+
         emit Withdrawal(msg.sender, amount);
     }
 
     function pickWinner(uint seed) external onlyOwner returns (bytes32) {
         require(LINK.balanceOf(address(this)) >= fee, "Contest: not enough LINK");
-        return requestRandomness(keyHash, fee, seed);
+        requestId = requestRandomness(keyHash, fee, seed);
+        return requestId;
     }
 
-    function fulfillRandomness(bytes32, uint randomness) internal override {
+    function fulfillRandomness(bytes32 _requestId, uint randomness) internal override {
+        require(_requestId == requestId, "Contest: wrong request ID");
         winner = participants[winningIndex(randomness)];
         emit Result(winner);
     }
@@ -111,16 +116,14 @@ contract SaferWinning is Ownable, VRFConsumerBase {
         }
     }
 
-    modifier updateParticipantsDeposit {
-        _;
+    function updateParticipantsDeposit() private {
         if (participantIndex[msg.sender] == 0) {
           participantIndex[msg.sender] = participants.length;
           participants.push(msg.sender);
         }
     }
 
-    modifier updateParticipantsWithdrawal {
-        _;
+    function updateParticipantsWithdrawal() private {
         if (entries[msg.sender] == 0) {
           uint index = participantIndex[msg.sender];
           address last = participants[participants.length - 1];
@@ -130,50 +133,6 @@ contract SaferWinning is Ownable, VRFConsumerBase {
           delete participantIndex[msg.sender];
         }
     }
-
-    modifier updateLeaderboardDeposit {
-        _;
-        uint _entries = entries[msg.sender];
-        if (_entries < floor) return;
-        uint i;
-        for (i; i < leaderboard.length; i++) {
-            if (leaderboard[i].entries <= _entries) break;
-        }
-        uint j;
-        for (j; j < leaderboard.length; j++) {
-            if (leaderboard[j].account == msg.sender) break;
-        }
-        for (uint k = Math.min(j, leaderboard.length - 1); k > i; k--) {
-            leaderboard[k] = leaderboard[k - 1];
-        }
-        leaderboard[i] = Leader(msg.sender, _entries);
-        floor = leaderboard[leaderboard.length - 1].entries;
-    }
-
-    modifier updateLeaderboardWithdrawal {
-        uint previous = entries[msg.sender];
-        _;
-        if (previous < floor) return;
-        uint _entries = entries[msg.sender];
-        uint i = leaderboard.length - 1;
-        for (i; i > 0; i--) {
-            if (leaderboard[i].entries >= _entries) break;
-        }
-        uint j;
-        for (j; j < leaderboard.length; j++) {
-            if (leaderboard[j].account == msg.sender) break;
-        }
-        for (j; j < Math.min(i, leaderboard.length - 1); j++) {
-            leaderboard[j] = leaderboard[j + 1];
-        }
-        if (i < leaderboard.length - 1) {
-            leaderboard[i] = Leader(msg.sender, _entries);
-        } else {
-            delete leaderboard[leaderboard.length - 1];
-        }
-        floor = leaderboard[leaderboard.length - 1].entries;
-    }
-
 
     function withdrawLink() external onlyOwner {
         LINK.transfer(msg.sender, LINK.balanceOf(address(this)));
