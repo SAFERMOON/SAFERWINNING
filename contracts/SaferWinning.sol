@@ -14,6 +14,7 @@ contract SaferWinning is Ownable, VRFConsumerBase {
 
     ISaferMoon public immutable token;
     uint public immutable maxEntriesPerAccount;
+    uint public minDeposit;
 
     uint public totalEntries;
     mapping(address => uint) public entries;
@@ -34,6 +35,7 @@ contract SaferWinning is Ownable, VRFConsumerBase {
     constructor(
         address _token,
         uint _maxEntriesPerAccount,
+        uint _minDeposit,
         address _vrfCoordinator,
         address _link,
         bytes32 _keyHash,
@@ -42,6 +44,7 @@ contract SaferWinning is Ownable, VRFConsumerBase {
     ) VRFConsumerBase(_vrfCoordinator, _link) {
         token = ISaferMoon(_token);
         maxEntriesPerAccount = _maxEntriesPerAccount;
+        minDeposit = _minDeposit;
         keyHash = _keyHash;
         fee = _fee;
         participants.push(address(0));
@@ -53,7 +56,7 @@ contract SaferWinning is Ownable, VRFConsumerBase {
     }
 
     function deposit(uint amount) external onlyEOA {
-        require(amount != 0, "Contest: amount must be > 0");
+        require(amount >= minDeposit, "Contest: amount < minDeposit");
 
         uint reflection = token.reflectionFromToken(amount, !token.isExcludedFromFee(address(this)));
         uint _amount = token.tokenFromReflection(reflection);
@@ -103,6 +106,10 @@ contract SaferWinning is Ownable, VRFConsumerBase {
         require(_requestId == requestId, "Contest: wrong request ID");
         winner = participants[winningIndex(randomness)];
         emit Result(winner);
+    }
+
+    function setMinDeposit(uint _minDeposit) external onlyOwner {
+        minDeposit = _minDeposit;
     }
 
     function winningIndex(uint randomness) public view returns (uint) {
