@@ -5,6 +5,7 @@ describe("SaferWinning", () => {
   let Token, token, Contest, contest, account1, account2;
 
   const maxEntriesPerAccount = "10000000000000000000";
+  const minDeposit = "10000000000";
 
   beforeEach(async () => {
     Token = await ethers.getContractFactory("SaferMoon");
@@ -13,6 +14,7 @@ describe("SaferWinning", () => {
     contest = await Contest.deploy(
       token.address,
       maxEntriesPerAccount,
+      minDeposit,
       "0xa555fC018435bef5A13C6c6870a9d4C11DEC329C",
       "0x84b9B910527Ad5C03A9Ca831909E21e236EA7b06",
       "0xcaf3c3727e033261d383b315559476f48034c13b18f8cafed4d871abe5049186",
@@ -24,8 +26,9 @@ describe("SaferWinning", () => {
   });
 
   describe("deposit", () => {
-    it("prevents 0 deposits", async () => {
-      await expect(contest.deposit(0)).to.be.revertedWith("Contest: amount must be > 0");
+    it("prevents deposits < minDeposit", async () => {
+      await token.approve(contest.address, BigNumber.from(minDeposit).sub(1));
+      await expect(contest.deposit(BigNumber.from(minDeposit).sub(1))).to.be.revertedWith("Contest: amount < minDeposit");
     });
 
     it("caps deposits", async () => {
@@ -176,8 +179,16 @@ describe("SaferWinning", () => {
     });
   });
 
+  describe("setMinDeposit", () => {
+    it("sets minDeposit", async () => {
+      await contest.setMinDeposit(BigNumber.from(minDeposit).div(2));
+      expect(await contest.minDeposit()).to.equal(BigNumber.from(minDeposit).div(2));
+    });
+  });
+
   describe("winningIndex", () => {
     beforeEach(async () => {
+      await contest.setMinDeposit(1);
       await token.approve(contest.address, 1);
       await contest.deposit(1);
       await token.connect(account2).approve(contest.address, 2);
